@@ -1,23 +1,30 @@
 import cv2
 import os
 import dlib
+import numpy as np
+
+# Cargar los vectores de embeddings desde el archivo CSV
+embeddingsCSVPath = 'embeddings.csv'
+embeddingsData = np.genfromtxt(embeddingsCSVPath, delimiter=',')
 
 dataPath = 'C:/Users/sena/Desktop/repositorios/reconocimiento-facial/data'
-imagePath = os.listdir(dataPath)
-print('imagesPaths=', imagePath)
-
-face_recognizer = cv2.face_EigenFaceRecognizer.create()
-face_recognizer.read('modeloeigenface.xml')
-
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+peopleList = os.listdir(dataPath)  # Lista de nombres de las personas que entrenaste
 
 # Cargar el detector de rostros de Dlib y el predictor de puntos de referencia faciales
 detector = dlib.get_frontal_face_detector()
 predictor = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')
 
+openfaceModelPath = 'C:/Users/sena/Desktop/repositorios/reconocimiento-facial/nn4.small2.v1.t7'
+model = cv2.dnn.readNet(openfaceModelPath)
+
+cap = cv2.VideoCapture(0)
+
+# Definir un umbral para el reconocimiento (ajusta según sea necesario)
+umbral = 0.5
+
 while True:
     ret, frame = cap.read()
-    if ret is False:
+    if not ret:
         break
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -37,20 +44,34 @@ while True:
 
         # Verificar si el recorte de la cara fue exitoso
         if rostro.shape[0] > 0 and rostro.shape[1] > 0:
-            rostro = cv2.resize(rostro, (150, 150), interpolation=cv2.INTER_CUBIC)
-            result = face_recognizer.predict(rostro)
-            # ... Resto de tu código ...
+            # Convertir la imagen de escala de grises en una imagen de tres canales
+            rostro_bgr = cv2.cvtColor(rostro, cv2.COLOR_GRAY2BGR)
+            rostro_bgr = cv2.resize(rostro_bgr, (96, 96), interpolation=cv2.INTER_CUBIC)
+
+            # Calcular el embedding del rostro detectado
+            blob = cv2.dnn.blobFromImage(rostro_bgr, 1.0, (96, 96), (0, 0, 0), swapRB=True, crop=False)
+            model.setInput(blob)
+            embedding = model.forward()
+
+            # Realizar el reconocimiento facial basado en los embeddings
+            min_distance = float('inf')
+            min_distance_label = None
+
+            for label, reference_embedding in enumerate(embeddingsData):
+                distance = np.linalg.norm(embedding - reference_embedding)
+                if distance < min_distance:
+                    min_distance = distance
+                    min_distance_label = label
+
+            if min_distance < umbral:
+                recognized_person = peopleList[min_distance_label]
+                cv2.putText(frame, recognized_person, (x, y - 25), 2, 1.1, (0, 255, 0), 1, cv2.LINE_AA)
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            else:
+                cv2.putText(frame, 'DESCONOCIDO', (x, y - 20), 2, 0.8, (0, 0, 255), 1, cv2.LINE_AA)
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
         else:
             print('Recorte de cara fallido')
-
-        cv2.putText(frame, '{}'.format(result), (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 1, cv2.LINE_AA)
-
-        if result[1] < 4000:
-            cv2.putText(frame, '{}'.format(imagePath[result[0]]), (x, y - 25), 2, 1.1, (0, 255, 0), 1, cv2.LINE_AA)
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-        else:
-            cv2.putText(frame, 'DESCONOCIDO', (x, y - 20), 2, 0.8, (0, 0, 255), 1, cv2.LINE_AA)
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
     cv2.imshow('frame', frame)
     k = cv2.waitKey(1)
@@ -59,3 +80,6 @@ while True:
 
 cap.release()
 cv2.destroyAllWindows()
+
+
+
